@@ -1,0 +1,704 @@
+/*
+ * Croix Player Prime (2026) | GPL-3.0 License
+ */
+
+package com.croix.prime.design
+
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.CutCornerShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.material3.Typography
+import androidx.compose.material3.darkColorScheme
+import androidx.compose.material3.dynamicDarkColorScheme
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.Immutable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.staticCompositionLocalOf
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import dev.chrisbanes.haze.HazeState
+import dev.chrisbanes.haze.HazeStyle
+import dev.chrisbanes.haze.HazeTint
+import dev.chrisbanes.haze.hazeEffect
+import kotlin.math.PI
+import kotlin.math.abs
+import kotlin.math.cos
+import kotlin.math.sin
+
+@Immutable
+data class CroixResolvedPalette(
+    val primary: Color,
+    val secondary: Color,
+    val background: Color,
+    val glassSurface: Color,
+    val glassBorderTop: Color,
+    val glassBorderBottom: Color,
+    val textPrimary: Color,
+    val textSecondary: Color,
+)
+
+val LocalCroixDesign = staticCompositionLocalOf { PrimePresets.PrimeVioletGlass }
+val LocalCroixPalette = staticCompositionLocalOf {
+    CroixResolvedPalette(
+        primary = Color(0xFFA238FF),
+        secondary = Color(0xFFFF2E93),
+        background = Color(0xFF0A0910),
+        glassSurface = Color.White.copy(alpha = 0.14f),
+        glassBorderTop = Color.White.copy(alpha = 0.26f),
+        glassBorderBottom = Color.White.copy(alpha = 0.06f),
+        textPrimary = Color.White,
+        textSecondary = Color.White.copy(alpha = 0.68f),
+    )
+}
+
+fun resolveArtworkShape(design: CroixDesignState): Shape {
+    if (design.vinylSpinEnabled) return CircleShape
+    return when (design.artworkShape) {
+        PrimeArtworkShape.ROUNDED -> RoundedCornerShape(design.artworkCornerDp.dp)
+        PrimeArtworkShape.SQUIRCLE -> RoundedCornerShape(percent = 28)
+        PrimeArtworkShape.SQUARE -> RoundedCornerShape(4.dp)
+        PrimeArtworkShape.CIRCLE_VINYL -> CircleShape
+        PrimeArtworkShape.CUT_CORNERS -> CutCornerShape(design.artworkCornerDp.coerceIn(10f, 30f).dp)
+    }
+}
+
+private fun buildPrimeTypography(scale: Float, fontStyle: PrimeFontStyle): Typography {
+    val s = scale.coerceIn(0.85f, 1.20f)
+    val family = when (fontStyle) {
+        PrimeFontStyle.MODERN_SANS -> FontFamily.SansSerif
+        PrimeFontStyle.EDITORIAL_SERIF -> FontFamily.Serif
+        PrimeFontStyle.TECH_MONO -> FontFamily.Monospace
+        PrimeFontStyle.COMPACT_CLEAN -> FontFamily.Default
+    }
+    val headingTracking = when (fontStyle) {
+        PrimeFontStyle.TECH_MONO -> (-0.2).sp
+        PrimeFontStyle.COMPACT_CLEAN -> (-1.0).sp
+        PrimeFontStyle.EDITORIAL_SERIF -> (-0.3).sp
+        PrimeFontStyle.MODERN_SANS -> (-0.8).sp
+    }
+    val headWeight = if (fontStyle == PrimeFontStyle.COMPACT_CLEAN) FontWeight.Bold else FontWeight.Black
+    val subHeadWeight = if (fontStyle == PrimeFontStyle.COMPACT_CLEAN) FontWeight.SemiBold else FontWeight.ExtraBold
+
+    return Typography(
+        headlineLarge = TextStyle(fontFamily = family, fontSize = (30f * s).sp, fontWeight = headWeight, letterSpacing = headingTracking),
+        headlineMedium = TextStyle(fontFamily = family, fontSize = (24f * s).sp, fontWeight = subHeadWeight, letterSpacing = (-0.4).sp),
+        titleLarge = TextStyle(fontFamily = family, fontSize = (20f * s).sp, fontWeight = FontWeight.Bold, letterSpacing = (-0.2).sp),
+        titleMedium = TextStyle(fontFamily = family, fontSize = (16f * s).sp, fontWeight = FontWeight.Bold),
+        bodyLarge = TextStyle(fontFamily = family, fontSize = (15f * s).sp, fontWeight = FontWeight.Medium),
+        bodyMedium = TextStyle(fontFamily = family, fontSize = (14f * s).sp, fontWeight = FontWeight.Normal),
+        bodySmall = TextStyle(fontFamily = family, fontSize = (12f * s).sp, fontWeight = FontWeight.Normal),
+        labelLarge = TextStyle(fontFamily = family, fontSize = (13f * s).sp, fontWeight = FontWeight.Bold),
+        labelMedium = TextStyle(fontFamily = family, fontSize = (12f * s).sp, fontWeight = FontWeight.SemiBold),
+        labelSmall = TextStyle(fontFamily = family, fontSize = (11f * s).sp, fontWeight = FontWeight.SemiBold),
+    )
+}
+
+@Composable
+fun CroixPrimeTheme(
+    design: CroixDesignState,
+    albumSeedPrimary: Color? = null,
+    albumSeedSecondary: Color? = null,
+    content: @Composable () -> Unit,
+) {
+    val context = LocalContext.current
+    val safeDesign = design.clamped()
+
+    val targetPrimary = when (safeDesign.colorMode) {
+        PrimeColorMode.VIOLET_GLASS -> Color(0xFFA238FF)
+        PrimeColorMode.NEON_CYAN -> Color(0xFF00E5FF)
+        PrimeColorMode.ALBUM_MORPH -> albumSeedPrimary ?: Color(0xFFA238FF)
+        PrimeColorMode.DYNAMIC_SYSTEM -> dynamicDarkColorScheme(context).primary
+        PrimeColorMode.AMOLED_BLACK -> albumSeedPrimary ?: Color(0xFFA238FF)
+        PrimeColorMode.CUSTOM_GRADIENT -> safeDesign.customPrimaryFromHue
+    }
+    val targetSecondary = if (!safeDesign.useGradientStyle) {
+        targetPrimary
+    } else {
+        when (safeDesign.colorMode) {
+            PrimeColorMode.VIOLET_GLASS -> Color(0xFFFF2E93)
+            PrimeColorMode.NEON_CYAN -> Color(0xFF7C4DFF)
+            PrimeColorMode.ALBUM_MORPH -> albumSeedSecondary ?: Color(0xFF00E5FF)
+            PrimeColorMode.DYNAMIC_SYSTEM -> dynamicDarkColorScheme(context).tertiary
+            PrimeColorMode.AMOLED_BLACK -> Color(0xFF3A3A48)
+            PrimeColorMode.CUSTOM_GRADIENT -> safeDesign.customSecondaryFromHue
+        }
+    }
+    val targetBg = when {
+        safeDesign.pureBlackBackground || safeDesign.colorMode == PrimeColorMode.AMOLED_BLACK -> Color.Black
+        safeDesign.colorMode == PrimeColorMode.ALBUM_MORPH && albumSeedPrimary != null ->
+            lerp(Color(0xFF0A0910), albumSeedPrimary, 0.22f)
+        else -> Color(0xFF0A0910)
+    }
+
+    val primary by animateColorAsState(targetPrimary, tween(700), label = "primary")
+    val secondary by animateColorAsState(targetSecondary, tween(700), label = "secondary")
+    val bg by animateColorAsState(targetBg, tween(700), label = "bg")
+
+    val resolved = androidx.compose.runtime.remember(primary, secondary, bg, safeDesign.glassOpacity, safeDesign.borderGlowAlpha) {
+        CroixResolvedPalette(
+            primary = primary,
+            secondary = secondary,
+            background = bg,
+            glassSurface = Color.White.copy(alpha = safeDesign.glassOpacity),
+            glassBorderTop = Color.White.copy(alpha = safeDesign.borderGlowAlpha),
+            glassBorderBottom = primary.copy(alpha = (safeDesign.borderGlowAlpha * 0.45f).coerceIn(0f, 0.35f)),
+            textPrimary = Color.White,
+            textSecondary = Color.White.copy(alpha = 0.68f),
+        )
+    }
+
+    val m3Scheme = androidx.compose.runtime.remember(primary, secondary, bg) {
+        darkColorScheme(
+            primary = primary,
+            secondary = secondary,
+            background = bg,
+            surface = Color(0xFF13111E),
+            surfaceVariant = Color(0xFF1E1B2E),
+            onPrimary = Color.White,
+            onBackground = Color.White,
+            onSurface = Color.White,
+            onSurfaceVariant = Color.White.copy(alpha = 0.72f),
+        )
+    }
+
+    val strings = androidx.compose.runtime.remember(safeDesign.languageMode) {
+        resolveCroixStrings(safeDesign.languageMode)
+    }
+    val typography = androidx.compose.runtime.remember(safeDesign.fontScale, safeDesign.fontStyle) {
+        buildPrimeTypography(safeDesign.fontScale, safeDesign.fontStyle)
+    }
+
+    CompositionLocalProvider(
+        LocalCroixDesign provides safeDesign,
+        LocalCroixPalette provides resolved,
+        LocalCroixStrings provides strings,
+    ) {
+        MaterialTheme(
+            colorScheme = m3Scheme,
+            typography = typography,
+            content = content,
+        )
+    }
+}
+
+/**
+ * 120fps zero-recomposition ambient backdrop using Canvas radial gradients.
+ */
+@Composable
+fun CroixAnimatedBackdrop(
+    modifier: Modifier = Modifier,
+) {
+    val design = LocalCroixDesign.current
+    val palette = LocalCroixPalette.current
+    val glow = if (design.colorMode == PrimeColorMode.ALBUM_MORPH) {
+        design.ambientGlowStrength.coerceAtLeast(0.68f)
+    } else {
+        design.ambientGlowStrength
+    }
+
+    val phaseState = if (design.backdropMotionEnabled && glow > 0.02f) {
+        val transition = rememberInfiniteTransition(label = "backdrop_orbs")
+        val durationMs = (12_000f / design.backdropMotionSpeed).toInt().coerceIn(4_000, 30_000)
+        transition.animateFloat(
+            initialValue = 0f,
+            targetValue = (2.0 * PI).toFloat(),
+            animationSpec = infiniteRepeatable(tween(durationMs, easing = LinearEasing), RepeatMode.Restart),
+            label = "orb_phase",
+        )
+    } else null
+
+    Canvas(
+        modifier = modifier
+            .fillMaxSize()
+            .background(palette.background),
+    ) {
+        if (glow <= 0.02f) return@Canvas
+        val phase = phaseState?.value ?: 0f
+        val driftX = if (phaseState != null) cos(phase) * (size.width * 0.14f) else 0f
+        val driftY = if (phaseState != null) sin(phase) * (size.height * 0.09f) else 0f
+
+        if (!design.useGradientStyle) {
+            drawRect(
+                color = palette.primary.copy(alpha = (glow * 0.24f).coerceIn(0f, 0.35f)),
+            )
+        } else {
+            val r1 = size.width * 0.95f
+            drawCircle(
+                brush = Brush.radialGradient(
+                    colors = listOf(palette.primary.copy(alpha = glow * 0.56f), Color.Transparent),
+                    center = Offset(size.width * 0.24f + driftX, size.height * 0.14f + driftY),
+                    radius = r1,
+                ),
+                radius = r1,
+                center = Offset(size.width * 0.24f + driftX, size.height * 0.14f + driftY),
+            )
+            val r2 = size.width * 0.98f
+            drawCircle(
+                brush = Brush.radialGradient(
+                    colors = listOf(palette.secondary.copy(alpha = glow * 0.42f), Color.Transparent),
+                    center = Offset(size.width * 0.80f - driftX, size.height * 0.78f - driftY),
+                    radius = r2,
+                ),
+                radius = r2,
+                center = Offset(size.width * 0.80f - driftX, size.height * 0.78f - driftY),
+            )
+        }
+    }
+}
+
+/**
+ * Multi-orb liquid Aurora Mesh backdrop for the fullscreen Player (LIVE_MESH style, 120fps pure Canvas!).
+ */
+@Composable
+fun CroixLiveMeshBackdrop(
+    animate: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    val design = LocalCroixDesign.current
+    val palette = LocalCroixPalette.current
+    val phaseState = if (animate) {
+        val transition = rememberInfiniteTransition(label = "live_mesh")
+        val dur = (10_500f / design.backdropMotionSpeed).toInt().coerceIn(4_000, 26_000)
+        transition.animateFloat(
+            initialValue = 0f,
+            targetValue = (2.0 * PI).toFloat(),
+            animationSpec = infiniteRepeatable(tween(dur, easing = LinearEasing), RepeatMode.Restart),
+            label = "mesh_phase",
+        )
+    } else null
+
+    Canvas(
+        modifier = modifier
+            .fillMaxSize()
+            .background(Color(0xFF07060C)),
+    ) {
+        val p = phaseState?.value ?: 0.8f
+        val w = size.width
+        val h = size.height
+        val blend = lerp(palette.primary, palette.secondary, 0.5f)
+
+        val c1 = Offset(w * (0.22f + 0.18f * cos(p)), h * (0.18f + 0.12f * sin(p)))
+        val c2 = Offset(w * (0.82f + 0.14f * sin(p * 1.3f)), h * (0.44f + 0.16f * cos(p)))
+        val c3 = Offset(w * (0.35f - 0.16f * sin(p * 0.8f)), h * (0.82f - 0.12f * cos(p * 1.1f)))
+
+        drawCircle(
+            brush = Brush.radialGradient(listOf(palette.primary.copy(alpha = 0.72f), Color.Transparent), center = c1, radius = w * 0.98f),
+            radius = w * 0.98f,
+            center = c1,
+        )
+        drawCircle(
+            brush = Brush.radialGradient(listOf(palette.secondary.copy(alpha = 0.62f), Color.Transparent), center = c2, radius = w * 0.94f),
+            radius = w * 0.94f,
+            center = c2,
+        )
+        drawCircle(
+            brush = Brush.radialGradient(listOf(blend.copy(alpha = 0.48f), Color.Transparent), center = c3, radius = w * 0.90f),
+            radius = w * 0.90f,
+            center = c3,
+        )
+        drawRect(
+            brush = Brush.verticalGradient(
+                listOf(Color.Black.copy(alpha = 0.18f), Color.Black.copy(alpha = 0.42f), Color.Black.copy(alpha = 0.72f)),
+            ),
+        )
+    }
+}
+
+/**
+ * Core translucent Glassmorphism surface driven live by Croix Studio sliders + real Android 12+ Haze blur.
+ */
+@Composable
+fun CroixGlassCard(
+    modifier: Modifier = Modifier,
+    hazeState: HazeState? = null,
+    cornerRadius: Dp = LocalCroixDesign.current.cornerRadiusDp.dp,
+    shapeOverride: Shape? = null,
+    opacityOverride: Float? = null,
+    accentTint: Color? = null,
+    onClick: (() -> Unit)? = null,
+    content: @Composable BoxScope.() -> Unit,
+) {
+    val design = LocalCroixDesign.current
+    val palette = LocalCroixPalette.current
+    val shape = shapeOverride ?: RoundedCornerShape(cornerRadius)
+    val effectiveAlpha = (opacityOverride ?: design.glassOpacity).coerceIn(0.04f, 0.85f)
+    val baseFill = (accentTint ?: Color.White).copy(alpha = effectiveAlpha)
+
+    val hazeMod = if (hazeState != null && design.glassBlurDp > 1f) {
+        Modifier.hazeEffect(
+            state = hazeState,
+            style = HazeStyle(
+                backgroundColor = palette.background.copy(alpha = 0.5f),
+                tint = HazeTint(baseFill),
+                blurRadius = design.glassBlurDp.dp,
+                noiseFactor = if (design.glassNoiseEnabled) 0.045f else 0f,
+            ),
+        )
+    } else {
+        Modifier.background(
+            Brush.verticalGradient(
+                listOf(
+                    baseFill,
+                    (accentTint ?: Color.White).copy(alpha = (effectiveAlpha * 0.68f).coerceAtLeast(0.03f)),
+                ),
+            ),
+            shape,
+        )
+    }
+
+    val clickMod = if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier
+
+    Box(
+        modifier = modifier
+            .clip(shape)
+            .then(hazeMod)
+            .border(
+                width = design.borderWidthDp.dp,
+                brush = Brush.verticalGradient(
+                    listOf(palette.glassBorderTop, palette.glassBorderBottom),
+                ),
+                shape = shape,
+            )
+            .then(clickMod),
+        content = content,
+    )
+}
+
+data class CroixNavDestination(
+    val route: String,
+    val label: String,
+    val icon: ImageVector,
+)
+
+/**
+ * Translucent navigation bar switching live between Floating Pill, Docked Glass, Compact Icons, and Slim mode.
+ */
+@Composable
+fun CroixNavigationBar(
+    destinations: List<CroixNavDestination>,
+    currentRoute: String,
+    hazeState: HazeState,
+    onSelect: (String) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val design = LocalCroixDesign.current
+    val palette = LocalCroixPalette.current
+    val isFloating = design.navBarStyle != PrimeNavBarStyle.DOCKED_TRANSLUCENT
+    val showLabels = design.showNavLabels && design.navBarStyle != PrimeNavBarStyle.COMPACT_ICONS && !design.slimNavBar
+
+    val outerPadding = if (isFloating) 16.dp else 0.dp
+    val corner = if (isFloating) (design.cornerRadiusDp + 6f).coerceAtMost(36f).dp else 0.dp
+    val rowVPad = if (design.slimNavBar) 6.dp else 10.dp
+    val itemVPad = if (design.slimNavBar) 4.dp else 6.dp
+
+    CroixGlassCard(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(horizontal = outerPadding, vertical = if (isFloating) (if (design.slimNavBar) 6.dp else 10.dp) else 0.dp),
+        hazeState = hazeState,
+        cornerRadius = corner,
+        opacityOverride = (design.glassOpacity + 0.08f).coerceAtMost(0.80f),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 8.dp, vertical = rowVPad),
+            horizontalArrangement = Arrangement.SpaceEvenly,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            destinations.forEach { dest ->
+                val selected = dest.route == currentRoute
+                Column(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(
+                            if (selected) palette.primary.copy(alpha = 0.24f) else Color.Transparent,
+                        )
+                        .clickable { onSelect(dest.route) }
+                        .padding(horizontal = 22.dp, vertical = itemVPad),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    Icon(
+                        imageVector = dest.icon,
+                        contentDescription = dest.label,
+                        tint = if (selected) palette.primary else palette.textSecondary,
+                        modifier = Modifier.size(if (design.slimNavBar) 20.dp else 22.dp),
+                    )
+                    if (showLabels) {
+                        Spacer(Modifier.height(2.dp))
+                        Text(
+                            text = dest.label,
+                            style = MaterialTheme.typography.labelMedium,
+                            fontSize = 11.sp,
+                            color = if (selected) Color.White else palette.textSecondary,
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Interactive live animated audio visualizer (Spectrum Bars, Pulse Wave, Orbit Rings).
+ */
+@Composable
+fun CroixAudioVisualizer(
+    isPlaying: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    val design = LocalCroixDesign.current
+    val palette = LocalCroixPalette.current
+    if (design.visualizerStyle == PrimeVisualizerStyle.OFF) return
+
+    val infinite = rememberInfiniteTransition(label = "visualizer")
+    val phase by infinite.animateFloat(
+        initialValue = 0f,
+        targetValue = (2.0 * PI).toFloat(),
+        animationSpec = infiniteRepeatable(tween(1800, easing = LinearEasing), RepeatMode.Restart),
+        label = "viz_phase",
+    )
+
+    Canvas(modifier = modifier.fillMaxWidth().height(42.dp)) {
+        val w = size.width
+        val h = size.height
+        val amp = if (isPlaying) 1.0f else 0.16f
+
+        when (design.visualizerStyle) {
+            PrimeVisualizerStyle.SPECTRUM_BARS -> {
+                val bars = 32
+                val slot = w / bars
+                val barW = (slot * 0.54f).coerceAtLeast(3f)
+                for (i in 0 until bars) {
+                    val v = abs(sin(phase * 1.4f + i * 0.55f) * cos(phase * 0.7f + i * 0.22f))
+                    val barH = (h * (0.14f + 0.84f * v * amp)).coerceAtLeast(4f)
+                    val x = i * slot + (slot - barW) / 2f
+                    drawRoundRect(
+                        brush = Brush.verticalGradient(listOf(palette.secondary, palette.primary)),
+                        topLeft = Offset(x, h - barH),
+                        size = Size(barW, barH),
+                        cornerRadius = CornerRadius(barW / 2f, barW / 2f),
+                    )
+                }
+            }
+            PrimeVisualizerStyle.PULSE_WAVE -> {
+                val path = Path()
+                val cy = h / 2f
+                val step = 6f
+                var x = 0f
+                while (x <= w) {
+                    val norm = x / w
+                    val envelope = sin(norm * PI).toFloat()
+                    val y = cy + sin((norm * 14f + phase * 1.6f).toDouble()).toFloat() * (h * 0.44f) * envelope * amp
+                    if (x == 0f) path.moveTo(x, y) else path.lineTo(x, y)
+                    x += step
+                }
+                drawPath(
+                    path = path,
+                    brush = Brush.horizontalGradient(listOf(palette.primary, palette.secondary, palette.primary)),
+                    style = Stroke(width = 5f, cap = StrokeCap.Round),
+                )
+            }
+            PrimeVisualizerStyle.ORBIT_RINGS -> {
+                val cx = w / 2f
+                val cy = h / 2f
+                for (ring in 1..3) {
+                    val pulse = 0.65f + 0.35f * sin(phase + ring * 1.1f) * amp
+                    drawCircle(
+                        color = if (ring % 2 == 0) palette.secondary.copy(alpha = 0.45f) else palette.primary.copy(alpha = 0.55f),
+                        radius = (h * 0.22f * ring) * pulse,
+                        center = Offset(cx, cy),
+                        style = Stroke(width = 3f),
+                    )
+                }
+            }
+            PrimeVisualizerStyle.OFF -> Unit
+        }
+    }
+}
+
+/**
+ * Interactive seekbar supporting 6 live styles from Croix Studio:
+ * Waveform, Capsule, Thin Line, Squiggly, Dashed EQ, and Glow Bar.
+ */
+@Composable
+fun CroixSeekBar(
+    progress: Float,
+    onSeek: (Float) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val design = LocalCroixDesign.current
+    val palette = LocalCroixPalette.current
+    val clamped = progress.coerceIn(0f, 1f)
+
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .height(38.dp)
+            .pointerInput(Unit) {
+                detectTapGestures { offset ->
+                    if (size.width > 0) onSeek((offset.x / size.width).coerceIn(0f, 1f))
+                }
+            }
+            .pointerInput(Unit) {
+                detectHorizontalDragGestures { change, _ ->
+                    change.consume()
+                    if (size.width > 0) onSeek((change.position.x / size.width).coerceIn(0f, 1f))
+                }
+            },
+        contentAlignment = Alignment.Center,
+    ) {
+        Canvas(modifier = Modifier.fillMaxSize()) {
+            val w = size.width
+            val h = size.height
+            val centerY = h / 2f
+            val activeX = w * clamped
+            val inactiveColor = Color.White.copy(alpha = 0.22f)
+
+            when (design.progressStyle) {
+                PrimeProgressStyle.WAVEFORM -> {
+                    val bars = 46
+                    val gap = w / bars
+                    val barWidth = (gap * 0.52f).coerceAtLeast(3f)
+                    for (i in 0 until bars) {
+                        val frac = i.toFloat() / bars
+                        val wave = 0.25f + 0.75f * abs(sin((i * 0.65 + 0.4)).toFloat())
+                        val barH = (h * 0.82f) * wave
+                        val x = i * gap + (gap - barWidth) / 2f
+                        val color = if (frac <= clamped) palette.primary else inactiveColor
+                        drawRoundRect(
+                            color = color,
+                            topLeft = Offset(x, centerY - barH / 2f),
+                            size = Size(barWidth, barH),
+                            cornerRadius = CornerRadius(barWidth / 2f, barWidth / 2f),
+                        )
+                    }
+                }
+                PrimeProgressStyle.CAPSULE -> {
+                    val barH = 12f
+                    drawRoundRect(
+                        color = inactiveColor,
+                        topLeft = Offset(0f, centerY - barH / 2f),
+                        size = Size(w, barH),
+                        cornerRadius = CornerRadius(barH / 2f, barH / 2f),
+                    )
+                    drawRoundRect(
+                        brush = Brush.horizontalGradient(listOf(palette.primary, palette.secondary)),
+                        topLeft = Offset(0f, centerY - barH / 2f),
+                        size = Size(activeX.coerceAtLeast(barH), barH),
+                        cornerRadius = CornerRadius(barH / 2f, barH / 2f),
+                    )
+                }
+                PrimeProgressStyle.THIN_LINE -> {
+                    drawLine(inactiveColor, Offset(0f, centerY), Offset(w, centerY), strokeWidth = 5f, cap = StrokeCap.Round)
+                    drawLine(palette.primary, Offset(0f, centerY), Offset(activeX, centerY), strokeWidth = 5f, cap = StrokeCap.Round)
+                    drawCircle(Color.White, radius = 9f, center = Offset(activeX, centerY))
+                }
+                PrimeProgressStyle.SQUIGGLY -> {
+                    drawLine(inactiveColor, Offset(activeX, centerY), Offset(w, centerY), strokeWidth = 6f, cap = StrokeCap.Round)
+                    val path = Path()
+                    val step = 6f
+                    var x = 0f
+                    while (x <= activeX) {
+                        val y = centerY + sin((x / 24f) * PI).toFloat() * 7f
+                        if (x == 0f) path.moveTo(x, y) else path.lineTo(x, y)
+                        x += step
+                    }
+                    drawPath(path, color = palette.primary, style = Stroke(width = 6f, cap = StrokeCap.Round))
+                    drawCircle(Color.White, radius = 10f, center = Offset(activeX, centerY))
+                }
+                PrimeProgressStyle.DASHED_EQ -> {
+                    val segments = 26
+                    val slot = w / segments
+                    val segW = (slot * 0.66f).coerceAtLeast(4f)
+                    val segH = 10f
+                    for (i in 0 until segments) {
+                        val frac = (i + 0.5f) / segments
+                        val active = frac <= clamped
+                        val x = i * slot + (slot - segW) / 2f
+                        drawRoundRect(
+                            color = if (active) lerp(palette.primary, palette.secondary, frac) else inactiveColor,
+                            topLeft = Offset(x, centerY - segH / 2f),
+                            size = Size(segW, segH),
+                            cornerRadius = CornerRadius(4f, 4f),
+                        )
+                    }
+                }
+                PrimeProgressStyle.GLOW_BAR -> {
+                    val barH = 8f
+                    drawRoundRect(
+                        color = inactiveColor,
+                        topLeft = Offset(0f, centerY - barH / 2f),
+                        size = Size(w, barH),
+                        cornerRadius = CornerRadius(barH / 2f, barH / 2f),
+                    )
+                    // Outer neon halo
+                    drawRoundRect(
+                        brush = Brush.horizontalGradient(listOf(palette.primary.copy(alpha = 0.36f), palette.secondary.copy(alpha = 0.42f))),
+                        topLeft = Offset(0f, centerY - 12f),
+                        size = Size(activeX.coerceAtLeast(barH), 24f),
+                        cornerRadius = CornerRadius(12f, 12f),
+                    )
+                    // Core laser bar
+                    drawRoundRect(
+                        brush = Brush.horizontalGradient(listOf(palette.primary, palette.secondary)),
+                        topLeft = Offset(0f, centerY - barH / 2f),
+                        size = Size(activeX.coerceAtLeast(barH), barH),
+                        cornerRadius = CornerRadius(barH / 2f, barH / 2f),
+                    )
+                    // Glowing thumb halo + core
+                    drawCircle(palette.secondary.copy(alpha = 0.45f), radius = 16f, center = Offset(activeX, centerY))
+                    drawCircle(Color.White, radius = 8f, center = Offset(activeX, centerY))
+                }
+            }
+        }
+    }
+}
