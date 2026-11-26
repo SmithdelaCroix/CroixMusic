@@ -183,8 +183,119 @@ class CroixPrimeViewModel(application: Application) : AndroidViewModel(applicati
     private val _pendingYtChannelSwitchUrl = MutableStateFlow<String?>(null)
     val pendingYtChannelSwitchUrl: StateFlow<String?> = _pendingYtChannelSwitchUrl.asStateFlow()
 
+    // Live Contextual Bandit session feedback (Spotify BaRT + Deezer Flow real-time steering)
+    private val sessionSkippedTrackIds = LinkedHashSet<String>()
+    private val sessionArtistSkipCounts = HashMap<String, Int>()
+    private val sessionLikedArtists = LinkedHashSet<String>()
+    private var historyCommitJob: Job? = null
+
     fun consumePendingYtChannelSwitchUrl() {
         _pendingYtChannelSwitchUrl.value = null
+    }
+
+    private fun buildListeningFeedbackSnapshot(): HybridAlgorithmEngine.ListeningFeedbackSnapshot {
+        val now = System.currentTimeMillis()
+        val favIds = favorites.value.map { it.id }.toSet()
+        val artistScores = HashMap<String, Double>()
+        val recentIds = HashSet<String>()
+        val dbSkippedIds = HashSet<String>()
+
+        historyEntities.value.forEach { rec ->
+            if ((now - rec.playedAtMs) < 18L * 3_600_000L && rec.id !in favIds) {
+                recentIds.add(rec.id)
+            }
+            if (rec.skipCount >= 2 && rec.completedPlays == 0) {
+                dbSkippedIds.add(rec.id)
+            }
+            val aKey = HybridAlgorithmEngine.normalizeArtistKey(rec.artist)
+            if (aKey.isNotBlank()) {
+                val score = HybridAlgorithmEngine.computeTrackEngagementScore(
+                    rec = HybridAlgorithmEngine.WeightedPlayRecord(
+                        track = rec.toTrack(),
+                        playCount = rec.playCount,
+                        playedAtMs = rec.playedAtMs,
+                        completedPlays = rec.completedPlays,
+                        skipCount = rec.skipCount,
+                    ),
+                    nowMs = now,
+                    isFavorite = rec.id in favIds,
+                )
+                artistScores[aKey] = (artistScores[aKey] ?: 0.0) + score
+            }
+        }
+        val dislikedArtists = sessionArtistSkipCounts.filterValues { it >= 2 }.keys.toSet()
+        return HybridAlgorithmEngine.ListeningFeedbackSnapshot(
+            artistEngagementScores = artistScores,
+            skippedTrackIds = sessionSkippedTrackIds + dbSkippedIds,
+            recentlyPlayedIds = recentIds,
+            sessionDislikedArtists = dislikedArtists,
+            sessionLikedArtists = sessionLikedArtists.toSet(),
+        )
+    }
+
+    private fun handleTrackEngagement(
+        track: Track,
+        playedMs: Long,
+        durationMs: Long,
+        wasManualSkip: Boolean,
+    ) {
+        if (designState.value.privateSessionEnabled) return
+        val aKey = HybridAlgorithmEngine.normalizeArtistKey(track.artist)
+        val isFastSkip = wasManualSkip && playedMs in 1_000L..22_000L &&
+            (durationMs <= 0L || playedMs < (durationMs * 0.25).toLong())
+        val isCompleted = !wasManualSkip || playedMs >= 45_000L ||
+            (durationMs > 0L && playedMs >= (durationMs * 0.65).toLong())
+
+        if (isFastSkip) {
+            sessionSkippedTrackIds.add(track.id)
+            if (aKey.isNotBlank()) {
+                sessionArtistSkipCounts[aKey] = (sessionArtistSkipCounts[aKey] ?: 0) + 1
+                sessionLikedArtists.remove(aKey)
+            }
+            // Immediately steer upcoming queue away from skipped song/artist (Deezer Flow / Spotify live steering!)
+            playerController.applyAdaptiveQueueReRank(track, buildListeningFeedbackSnapshot())
+            viewModelScope.launch(Dispatchers.IO) {
+                val existing = dao.getHistoryById(track.id)
+                dao.upsertHistory(
+                    HistoryTrackEntity(
+                        id = track.id,
+                        title = track.title,
+                        artist = track.artist,
+                        album = track.album,
+                        durationSeconds = track.durationSeconds,
+                        thumbnailUrl = track.thumbnailUrl,
+                        playCount = existing?.playCount ?: 0,
+                        playedAtMs = existing?.playedAtMs ?: System.currentTimeMillis(),
+                        completedPlays = existing?.completedPlays ?: 0,
+                        skipCount = (existing?.skipCount ?: 0) + 1,
+                    ),
+                )
+            }
+        } else if (isCompleted) {
+            sessionSkippedTrackIds.remove(track.id)
+            if (aKey.isNotBlank()) {
+                sessionLikedArtists.add(aKey)
+                sessionArtistSkipCounts.remove(aKey)
+            }
+            viewModelScope.launch(Dispatchers.IO) {
+                val existing = dao.getHistoryById(track.id)
+                val now = System.currentTimeMillis()
+                dao.upsertHistory(
+                    HistoryTrackEntity(
+                        id = track.id,
+                        title = track.title,
+                        artist = track.artist,
+                        album = track.album,
+                        durationSeconds = track.durationSeconds,
+                        thumbnailUrl = track.thumbnailUrl,
+                        playCount = (existing?.playCount ?: 0).coerceAtLeast(1),
+                        playedAtMs = now,
+                        completedPlays = (existing?.completedPlays ?: 0) + 1,
+                        skipCount = existing?.skipCount ?: 0,
+                    ),
+                )
+            }
+        }
     }
 
     val playerController = CroixPlayerController(
@@ -213,7 +324,7 @@ class CroixPrimeViewModel(application: Application) : AndroidViewModel(applicati
             val session = serverState.value
             val affinityArtists = buildSet {
                 favorites.value.take(30).forEach { add(it.artist) }
-                history.value.take(30).forEach { add(it.artist) }
+                historyEntities.value.filter { it.completedPlays >= it.skipCount }.take(30).forEach { add(it.artist) }
                 session.ytMusicHistoryTracks.take(25).forEach { add(it.artist) }
                 if (session.isSpotifyConnected) {
                     session.spotifyTaste.allSeedArtistNames.take(35).forEach { add(it) }
@@ -226,11 +337,15 @@ class CroixPrimeViewModel(application: Application) : AndroidViewModel(applicati
                 targetQueueSize = targetSize,
                 userAffinityArtists = affinityArtists,
                 blockedArtistKeys = blocked,
+                feedback = buildListeningFeedbackSnapshot(),
                 spotifyClient = if (session.isSpotifyConnected) spotifyClient else null,
                 spotifySpDc = session.spotifySpDc,
                 spotifySpKey = session.spotifySpKey,
                 onWaveReady = onWaveReady,
             )
+        },
+        onTrackEngagement = { track, playedMs, durationMs, wasManualSkip ->
+            handleTrackEngagement(track, playedMs, durationMs, wasManualSkip)
         },
     )
 
@@ -478,8 +593,13 @@ class CroixPrimeViewModel(application: Application) : AndroidViewModel(applicati
                     _translatedLyrics.value = emptyList()
 
                     // Private Session pauses ALL local history, stats & play-event logging!
+                    // Also wait 14s of real listening before committing to history so fast skips NEVER poison taste!
+                    historyCommitJob?.cancel()
                     if (!designState.value.privateSessionEnabled) {
-                        launch(Dispatchers.IO) {
+                        historyCommitJob = launch(Dispatchers.IO) {
+                            delay(14_000L)
+                            val stillSameTrack = playbackState.value.currentTrack?.id == track.id
+                            if (!stillSameTrack || designState.value.privateSessionEnabled) return@launch
                             val now = System.currentTimeMillis()
                             val existing = dao.getHistoryById(track.id)
                             dao.upsertHistory(
@@ -492,6 +612,8 @@ class CroixPrimeViewModel(application: Application) : AndroidViewModel(applicati
                                     thumbnailUrl = track.thumbnailUrl,
                                     playCount = (existing?.playCount ?: 0) + 1,
                                     playedAtMs = now,
+                                    completedPlays = (existing?.completedPlays ?: 0) + 1,
+                                    skipCount = existing?.skipCount ?: 0,
                                 ),
                             )
                             val cal = Calendar.getInstance().apply { timeInMillis = now }
@@ -982,6 +1104,7 @@ class CroixPrimeViewModel(application: Application) : AndroidViewModel(applicati
                 spotifyTaste = session.spotifyTaste.takeIf { session.isSpotifyConnected },
                 localHistory = history.value,
                 fallbackTracks = fallback,
+                feedback = buildListeningFeedbackSnapshot(),
             )
             _hiddenGemsLoading.value = false
             if (gems.isNotEmpty()) {
@@ -1035,6 +1158,8 @@ class CroixPrimeViewModel(application: Application) : AndroidViewModel(applicati
                     track = it.toTrack(),
                     playCount = it.playCount,
                     playedAtMs = it.playedAtMs,
+                    completedPlays = it.completedPlays,
+                    skipCount = it.skipCount,
                 )
             }
             val blockedKeys = blockedArtists.value.map { it.artistKey }.toSet()
@@ -1048,6 +1173,7 @@ class CroixPrimeViewModel(application: Application) : AndroidViewModel(applicati
                 blockedArtistKeys = blockedKeys,
                 ytMusicHistory = session.ytMusicHistoryTracks,
                 ytMusicLiked = session.ytMusicLikedTracks,
+                feedback = buildListeningFeedbackSnapshot(),
             )
             _homeFeed.value = bundle
             _adsBlockedCount.value = AdBlockEngine.blockedCount.get()
@@ -1070,6 +1196,7 @@ class CroixPrimeViewModel(application: Application) : AndroidViewModel(applicati
                 blendWeight = session.spotifyBlendWeight,
                 moodQuery = mood?.query,
                 blockedArtistKeys = blockedKeys,
+                feedback = buildListeningFeedbackSnapshot(),
             )
             if (queue.isNotEmpty()) {
                 playerController.playTrack(queue.first(), queue, autoFetchRadio = true)
@@ -1847,9 +1974,15 @@ class CroixPrimeViewModel(application: Application) : AndroidViewModel(applicati
     fun toggleFavorite(track: Track) {
         viewModelScope.launch(Dispatchers.IO) {
             val isFav = favorites.value.any { it.id == track.id }
+            val aKey = HybridAlgorithmEngine.normalizeArtistKey(track.artist)
             if (isFav) {
                 dao.removeFavorite(track.id)
             } else {
+                if (aKey.isNotBlank()) {
+                    sessionLikedArtists.add(aKey)
+                    sessionArtistSkipCounts.remove(aKey)
+                }
+                sessionSkippedTrackIds.remove(track.id)
                 dao.addFavorite(
                     FavoriteTrackEntity(
                         id = track.id,

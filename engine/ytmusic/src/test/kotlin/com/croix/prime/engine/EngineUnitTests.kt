@@ -202,4 +202,83 @@ class EngineUnitTests {
             )
         }
     }
+
+    @Test
+    fun `spotify behavioral engagement penalizes fast skips and rewards full listens`() {
+        val now = 1_750_000_000_000L
+        val loved = HybridAlgorithmEngine.WeightedPlayRecord(
+            track = Track("a", "Loved", "Tame Impala"),
+            playCount = 5,
+            playedAtMs = now - 3_600_000L,
+            completedPlays = 5,
+            skipCount = 0,
+        )
+        val skipped = HybridAlgorithmEngine.WeightedPlayRecord(
+            track = Track("b", "Skipped", "Random Artist"),
+            playCount = 1,
+            playedAtMs = now - 3_600_000L,
+            completedPlays = 0,
+            skipCount = 4,
+        )
+        val lovedScore = HybridAlgorithmEngine.computeTrackEngagementScore(loved, now, isFavorite = true)
+        val skippedScore = HybridAlgorithmEngine.computeTrackEngagementScore(skipped, now, isFavorite = false)
+        assertTrue("Completed favorite must have strong positive score", lovedScore > 5.0)
+        assertTrue("Repeatedly skipped track must drop negative", skippedScore < 0.0)
+    }
+
+    @Test
+    fun `deezer bpm era and script coherence match acoustic similarity`() {
+        val closeBpm = HybridAlgorithmEngine.computeBpmSimilarity(120f, 124f)
+        val halfTimeBpm = HybridAlgorithmEngine.computeBpmSimilarity(120f, 60f)
+        val farBpm = HybridAlgorithmEngine.computeBpmSimilarity(120f, 175f)
+        assertTrue(closeBpm > farBpm)
+        assertTrue("Half-time BPM should still score strongly positive", halfTimeBpm > 1.5)
+
+        assertTrue(HybridAlgorithmEngine.computeEraSimilarity(2020, 2022) > HybridAlgorithmEngine.computeEraSimilarity(2020, 1982))
+        assertEquals(HybridAlgorithmEngine.TextScript.LATIN, HybridAlgorithmEngine.detectScript("Blinding Lights The Weeknd"))
+        assertEquals(HybridAlgorithmEngine.TextScript.CJK_HANGUL, HybridAlgorithmEngine.detectScript("夜に駆ける YOASOBI"))
+        assertTrue(
+            HybridAlgorithmEngine.computeScriptCoherence(
+                anchorScript = HybridAlgorithmEngine.TextScript.LATIN,
+                userScripts = setOf(HybridAlgorithmEngine.TextScript.LATIN),
+                candidateScript = HybridAlgorithmEngine.TextScript.CYRILLIC,
+            ) < -4.0,
+        )
+    }
+
+    @Test
+    fun `deezer vibe clustering separates distinct genres into pure clusters`() {
+        val artists = listOf("Arctic Monkeys", "Bad Bunny", "The Strokes", "Feid")
+        val relatedMap = mapOf(
+            "Arctic Monkeys" to setOf("the strokes", "tame impala", "cage the elephant"),
+            "The Strokes" to setOf("arctic monkeys", "interpol", "tame impala"),
+            "Bad Bunny" to setOf("feid", "rauw alejandro", "karol g"),
+            "Feid" to setOf("bad bunny", "mora", "rauw alejandro"),
+        )
+        val clusters = HybridAlgorithmEngine.clusterArtistsByRelatedGraph(artists, relatedMap)
+        assertEquals(2, clusters.size)
+        assertTrue(clusters.any { "Arctic Monkeys" in it && "The Strokes" in it && "Bad Bunny" !in it })
+        assertTrue(clusters.any { "Bad Bunny" in it && "Feid" in it && "Arctic Monkeys" !in it })
+    }
+
+    @Test
+    fun `live queue steering prunes disliked artists and demotes skipped artist`() {
+        val skipped = Track("s1", "Skip Me", "Bad Fit")
+        val queue = listOf(
+            skipped,
+            Track("q1", "Another Bad Fit", "Bad Fit"),
+            Track("q2", "Banished Song", "Hated Artist"),
+            Track("q3", "Great Match", "Tame Impala"),
+            Track("q4", "Nice Match", "MGMT"),
+        )
+        val feedback = HybridAlgorithmEngine.ListeningFeedbackSnapshot(
+            skippedTrackIds = setOf("s1"),
+            sessionDislikedArtists = setOf("hated artist"),
+            sessionLikedArtists = setOf("tame impala"),
+        )
+        val reranked = HybridAlgorithmEngine.reRankUpcomingQueue(queue, currentIndex = 0, skippedTrack = skipped, feedback = feedback)
+        assertFalse("Session-disliked artist must be removed", reranked.any { it.id == "q2" })
+        assertEquals("Great Match should jump ahead of demoted skipped artist", "q3", reranked[1].id)
+        assertEquals("Demoted skipped artist should move to end", "q1", reranked.last().id)
+    }
 }

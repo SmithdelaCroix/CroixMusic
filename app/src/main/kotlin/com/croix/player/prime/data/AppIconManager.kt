@@ -21,11 +21,11 @@ object AppIconManager {
     val options: List<AppIconOption> = listOf(
         AppIconOption(
             id = "violet",
-            labelEs = "Cristal Violeta",
-            labelEn = "Violet Glass",
+            labelEs = "Croix Clásico",
+            labelEn = "Croix Classic",
             aliasClassName = "com.croix.player.prime.IconVioletAlias",
-            primaryHex = 0xFFA238FF,
-            secondaryHex = 0xFFFF2E93,
+            primaryHex = 0xFF4A8EC2,
+            secondaryHex = 0xFFF6D347,
         ),
         AppIconOption(
             id = "cyan",

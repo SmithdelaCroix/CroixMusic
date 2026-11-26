@@ -27,7 +27,8 @@ Requisitos: Android 12+ y telefono de 64 bits (`arm64-v8a`).
 - Cambio entre varias cuentas de Google guardadas y cambio entre canales o perfiles dentro del mismo correo.
 - Conexion con cuenta de Spotify para sincronizar artistas, canciones escuchadas, Me gusta, playlists y mixes (Daily Mix, Descubrimiento Semanal, Daylist, Radar de Novedades).
 - Reproduccion directa o importacion de playlists y mixes de Spotify, ademas de importacion por enlace.
-- Recomendaciones basadas en historial y artistas relacionados, con control para mezclar el peso entre YouTube Music y Spotify. Filtra covers, versiones slowed, 8D, karaoke o recopilaciones largas.
+- Recomendaciones que combinan artistas relacionados de YouTube Music, Deezer y Spotify, ritmo (BPM), epoca y filtro de covers, versiones slowed, 8D, karaoke o recopilaciones largas.
+- La cola se adapta en vivo: si saltas rapido una cancion, el algoritmo baja ese estilo y reordena lo que sigue; las canciones que escuchas completas o guardas en favoritos ganan peso y tus mixes diarios separan generos distintos.
 - Pantalla de inicio con Flow por estado de animo, Joyas ocultas (canciones que no escuchaste), mixes diarios, seleccion rapida y artistas recomendados.
 - Sesion privada (pausa el historial, estadisticas y scrobbling) y lista de artistas bloqueados.
 

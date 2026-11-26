@@ -146,6 +146,12 @@ class CroixPlayerController(
         targetSize: Int,
         onWaveReady: suspend (List<Track>) -> Unit,
     ) -> Unit)? = null,
+    private val onTrackEngagement: ((
+        track: Track,
+        playedMs: Long,
+        durationMs: Long,
+        wasManualSkip: Boolean,
+    ) -> Unit)? = null,
 ) {
     private val appContext = context.applicationContext
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
@@ -221,11 +227,16 @@ class CroixPlayerController(
                 _state.update { it.copy(errorMessage = null) }
             }
             if (playbackState == Player.STATE_ENDED) {
-                if (_state.value.repeatOne) {
+                val cur = _state.value
+                cur.currentTrack?.let { finished ->
+                    val dur = cur.durationMs.coerceAtLeast(_positionMs.value)
+                    onTrackEngagement?.invoke(finished, dur, dur, false)
+                }
+                if (cur.repeatOne) {
                     seekTo(0L)
                     controller?.play()
                 } else {
-                    skipNext()
+                    skipNextInternal(wasManual = false)
                 }
             }
         }
@@ -298,7 +309,10 @@ class CroixPlayerController(
                             mc.volume = vol
                             if (remainingMs <= 500L && crossfadeTriggeredForTrackId != curId) {
                                 crossfadeTriggeredForTrackId = curId
-                                skipNext()
+                                _state.value.currentTrack?.let { fin ->
+                                    onTrackEngagement?.invoke(fin, dur, dur, false)
+                                }
+                                skipNextInternal(wasManual = false)
                             }
                         } else if (mc.volume < 0.99f && pos > cfMs) {
                             mc.volume = 1f
@@ -726,7 +740,34 @@ class CroixPlayerController(
         if (dur > 0L) seekTo((dur * fraction.coerceIn(0f, 1f)).toLong())
     }
 
+    fun applyAdaptiveQueueReRank(
+        skippedTrack: Track,
+        feedback: HybridAlgorithmEngine.ListeningFeedbackSnapshot,
+    ) {
+        _state.update { cur ->
+            val updated = HybridAlgorithmEngine.reRankUpcomingQueue(
+                queue = cur.queue,
+                currentIndex = cur.currentIndex,
+                skippedTrack = skippedTrack,
+                feedback = feedback,
+            )
+            if (updated == cur.queue) cur else cur.copy(queue = updated)
+        }
+    }
+
     fun skipNext() {
+        skipNextInternal(wasManual = true)
+    }
+
+    private fun skipNextInternal(wasManual: Boolean) {
+        val before = _state.value
+        if (before.queue.isEmpty()) return
+        if (wasManual) {
+            before.currentTrack?.let { skipped ->
+                onTrackEngagement?.invoke(skipped, _positionMs.value, before.durationMs, true)
+            }
+        }
+        // Re-read state AFTER engagement callback so any immediate adaptive queue re-ranking takes effect NOW!
         val s = _state.value
         if (s.queue.isEmpty()) return
         val next = if (s.shuffleEnabled && s.queue.size > 1) {

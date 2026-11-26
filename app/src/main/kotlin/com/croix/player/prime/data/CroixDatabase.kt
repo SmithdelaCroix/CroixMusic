@@ -42,6 +42,8 @@ data class HistoryTrackEntity(
     val thumbnailUrl: String,
     val playCount: Int = 1,
     val playedAtMs: Long = System.currentTimeMillis(),
+    val completedPlays: Int = 1,
+    val skipCount: Int = 0,
 ) {
     fun toTrack() = Track(id, title, artist, album, durationSeconds, thumbnailUrl)
 }
@@ -203,7 +205,7 @@ interface CroixDao {
         PlaylistTrackEntity::class,
         RecentSearchEntity::class,
     ],
-    version = 4,
+    version = 5,
     exportSchema = false,
 )
 abstract class CroixDatabase : RoomDatabase() {
@@ -212,6 +214,13 @@ abstract class CroixDatabase : RoomDatabase() {
     companion object {
         @Volatile
         private var instance: CroixDatabase? = null
+
+        private val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `history` ADD COLUMN `completedPlays` INTEGER NOT NULL DEFAULT 1")
+                db.execSQL("ALTER TABLE `history` ADD COLUMN `skipCount` INTEGER NOT NULL DEFAULT 0")
+            }
+        }
 
         private val MIGRATION_3_4 = object : Migration(3, 4) {
             override fun migrate(db: SupportSQLiteDatabase) {
@@ -249,7 +258,7 @@ abstract class CroixDatabase : RoomDatabase() {
                     CroixDatabase::class.java,
                     "croix_prime.db",
                 )
-                    .addMigrations(MIGRATION_3_4)
+                    .addMigrations(MIGRATION_3_4, MIGRATION_4_5)
                     .fallbackToDestructiveMigration(dropAllTables = true)
                     .build()
                     .also { instance = it }
